@@ -68,9 +68,16 @@ func TestPrintWritesCompleteSequence(t *testing.T) {
 	if !bytes.HasSuffix(written, protocol.ResetStatusRequestCommand()) {
 		t.Fatalf("print stream does not end with reset status request: %x", written)
 	}
+	if got := bytes.Count(written, protocol.PrintEndCommand()); got != 1 {
+		t.Fatalf("written stream contains %d print-end commands, want only final commit: %x", got, written)
+	}
 	firstPrintStatusAt := bytes.Index(written, protocol.RequestStatusCommand())
 	secondPrintStatusAt := bytes.LastIndex(written, protocol.RequestStatusCommand())
-	jobStartAt := bytes.Index(written, protocol.PrintEndCommand())
+	job, err := protocol.JobEnvironmentCommand(protocol.CutAfter, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobStartAt := bytes.Index(written, job)
 	rasterAt := bytes.Index(written, rasterCommand)
 	formFeedAt := bytes.Index(written, []byte{0x0c})
 	if firstPrintStatusAt == secondPrintStatusAt {
@@ -134,8 +141,8 @@ func TestPrintStopsBeforeFormFeedOnRasterStatusError(t *testing.T) {
 	if bytes.Contains(written, []byte{0x0c}) {
 		t.Fatalf("form feed was sent after raster status error: %x", written)
 	}
-	if got := bytes.Count(written, protocol.PrintEndCommand()); got != 1 {
-		t.Fatalf("got %d print-end commands, want only job-environment reset: %x", got, written)
+	if got := bytes.Count(written, protocol.PrintEndCommand()); got != 0 {
+		t.Fatalf("got %d print-end commands, want none before a successful raster transfer: %x", got, written)
 	}
 }
 
@@ -369,22 +376,25 @@ func TestBuildDryRunStreamValidatesPrinterBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	rasterCommand := []byte{0x1b, '.', 0x00, 0x00, 0x00, 0x01, 0x08, 0x00}
 	for _, want := range [][]byte{
 		protocol.PrintEndCommand(),
 		protocol.RequestStatusCommand(),
-		mustPageEnvironment(t, 15, protocol.DefaultMarginDots),
-		{0x1b, '.', 0x00, 0x00, 0x00, 0x01, 0x08, 0x00},
+		mustPageEnvironment(t, 1, 0),
+		rasterCommand,
 	} {
 		if !bytes.Contains(stream, want) {
 			t.Fatalf("dry-run stream missing %x in %x", want, stream)
 		}
 	}
+	if got := bytes.Count(stream, rasterCommand); got != 1 {
+		t.Fatalf("dry-run stream contains %d raster feed rows, want rendered image only: %x", got, stream)
+	}
 	if !bytes.HasSuffix(stream, protocol.PrintEndCommand()) {
 		t.Fatalf("dry-run stream does not end with print-end command: %x", stream)
 	}
-	commitAt := bytes.LastIndex(stream, protocol.PrintEndCommand())
-	if commitAt < 0 {
-		t.Fatalf("dry-run stream missing final print-end: %x", stream)
+	if got := bytes.Count(stream, protocol.PrintEndCommand()); got != 1 {
+		t.Fatalf("dry-run stream contains %d print-end commands, want only final commit: %x", got, stream)
 	}
 	if bytes.Contains(stream, protocol.OperationSendCommand(true)) || bytes.Contains(stream, protocol.OperationSendCommand(false)) {
 		t.Fatalf("dry-run stream contains operation-send command: %x", stream)
@@ -394,6 +404,39 @@ func TestBuildDryRunStreamValidatesPrinterBytes(t *testing.T) {
 	}
 	if got := bytes.Count(stream, protocol.RequestStatusCommand()); got != 2 {
 		t.Fatalf("dry-run stream contains %d print-mode status requests, want 2: %x", got, stream)
+	}
+}
+
+func TestBuildDryRunStreamHonorsExplicitMarginDots(t *testing.T) {
+	img := image.NewGray(image.Rect(0, 0, 1, 8))
+	stream, err := BuildDryRunStream(img, PrintOptions{
+		Cut:        protocol.CutAfter,
+		MarginDots: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if want := mustPageEnvironment(t, 5, 2); !bytes.Contains(stream, want) {
+		t.Fatalf("dry-run stream missing explicit-margin page environment %x in %x", want, stream)
+	}
+	rasterCommand := []byte{0x1b, '.', 0x00, 0x00, 0x00, 0x01, 0x08, 0x00}
+	if got := bytes.Count(stream, rasterCommand); got != 5 {
+		t.Fatalf("dry-run stream contains %d raster feed rows, want image plus margins: %x", got, stream)
+	}
+}
+
+func TestBuildDryRunStreamRejectsNegativeMarginDots(t *testing.T) {
+	img := image.NewGray(image.Rect(0, 0, 1, 8))
+	_, err := BuildDryRunStream(img, PrintOptions{
+		Cut:        protocol.CutAfter,
+		MarginDots: -1,
+	})
+	if err == nil {
+		t.Fatal("expected negative margin error")
+	}
+	if !strings.Contains(err.Error(), "margin must be non-negative") {
+		t.Fatalf("got %q, want margin validation error", err)
 	}
 }
 

@@ -35,9 +35,14 @@ type drainer interface {
 }
 
 type PrintOptions struct {
-	Cut               protocol.CutMode
-	Density           int
-	MarginDots        int
+	Cut     protocol.CutMode
+	Density int
+
+	// MarginDots adds blank feed rows before and after the rendered image.
+	// Zero means no protocol-level feed margin; render padding is controlled
+	// separately by render.Options.
+	MarginDots int
+
 	StatusTimeout     time.Duration
 	SkipReadyCheck    bool
 	ResetDelay        time.Duration
@@ -247,10 +252,10 @@ func BuildPrintChunks(img image.Image, opts PrintOptions) ([][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	marginDots := opts.MarginDots
-	if marginDots == 0 {
-		marginDots = protocol.DefaultMarginDots
+	if opts.MarginDots < 0 {
+		return nil, fmt.Errorf("margin must be non-negative, got %d", opts.MarginDots)
 	}
+	marginDots := opts.MarginDots
 	page, err := protocol.PageEnvironmentCommand(img.Bounds().Dx()+marginDots*2, marginDots)
 	if err != nil {
 		return nil, err

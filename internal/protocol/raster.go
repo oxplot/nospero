@@ -8,9 +8,8 @@ import (
 )
 
 const (
-	DPI               = 180
-	BlackThreshold    = 140
-	DefaultMarginDots = 7
+	DPI            = 180
+	BlackThreshold = 140
 )
 
 func DotsFromMM(mm float64) (int, error) {
