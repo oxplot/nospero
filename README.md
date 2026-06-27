@@ -32,6 +32,8 @@ nospero fonts list
 nospero print text "Hello"
 nospero print text --font Roboto --font-weight 700 --italic "Hello"
 nospero print text --text-align center --font Roboto "Top\nBottom"
+nospero print barcode --type code128 "ASSET-42"
+nospero print barcode --type qr "https://example.com/asset/42"
 nospero print image --file label.png
 nospero print mixed --file logo.png --text "Asset 42" --layout left
 ```
@@ -43,3 +45,9 @@ user cache directory. The default text font is `Roboto`. Text labels accept
 `--font-weight 100..900` and `--italic`; if Google Fonts provides a matching
 face, Nospero uses it, otherwise it applies the weight or slant in Go during
 rendering.
+
+Barcode labels are rendered locally and printed through the same raster path as
+text and image labels. Supported barcode types are `aztec`, `codabar`,
+`code128`, `code39`, `code93`, `datamatrix`, `ean8`, `ean13`, `pdf417`, `qr`,
+`2of5`, and `2of5-interleaved`. Use `--module-dots` when a scanner needs
+wider modules than the default.

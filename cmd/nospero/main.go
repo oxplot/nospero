@@ -384,6 +384,7 @@ func printCommand() *cli.Command {
 		Usage: "print a label",
 		Subcommands: []*cli.Command{
 			printTextCommand(),
+			printBarcodeCommand(),
 			printImageCommand(),
 			printMixedCommand(),
 		},
@@ -550,15 +551,49 @@ func printTextCommand() *cli.Command {
 }
 
 func textArgument(c *cli.Context) (string, error) {
+	return singleArgument(c, "text")
+}
+
+func printBarcodeCommand() *cli.Command {
+	return &cli.Command{
+		Name:      "barcode",
+		Usage:     "print a barcode label",
+		ArgsUsage: "DATA",
+		Flags:     barcodePrintFlags(),
+		Action: func(c *cli.Context) error {
+			data, err := barcodeArgument(c)
+			if err != nil {
+				return err
+			}
+			opts, popts, err := parsePrintOptions(c)
+			if err != nil {
+				return err
+			}
+			barcodeOpts, err := parseBarcodeOptions(c)
+			if err != nil {
+				return err
+			}
+			return renderAndPrint(c, opts, popts, func(opts render.Options) (*image.Gray, error) {
+				return render.BarcodeLabel(data, barcodeOpts, opts)
+			})
+		},
+	}
+}
+
+func barcodeArgument(c *cli.Context) (string, error) {
+	return singleArgument(c, "barcode data")
+}
+
+func singleArgument(c *cli.Context, name string) (string, error) {
 	args := c.Args().Slice()
 	if len(args) == 0 {
-		return "", fmt.Errorf("text argument is required")
+		return "", fmt.Errorf("%s argument is required", name)
 	}
 	if len(args) > 1 {
-		return "", fmt.Errorf("text must be provided as a single argument; quote text containing spaces")
+		return "", fmt.Errorf("%s must be provided as a single argument; quote values containing spaces", name)
 	}
 	if strings.TrimSpace(args[0]) == "" {
-		return "", fmt.Errorf("text argument must not be empty")
+		return "", fmt.Errorf("%s argument must not be empty", name)
 	}
 	return args[0], nil
 }
@@ -644,6 +679,24 @@ func printMixedCommand() *cli.Command {
 
 func textPrintFlags() []cli.Flag {
 	return append(commonPrintFlags(), textRenderingFlags()...)
+}
+
+func barcodePrintFlags() []cli.Flag {
+	defaults := render.DefaultBarcodeOptions()
+	return append(commonPrintFlags(),
+		&cli.StringFlag{
+			Name:    "type",
+			Aliases: []string{"format", "symbology"},
+			Usage:   "barcode type: " + strings.Join(render.SupportedBarcodeKindNames(), ", "),
+			Value:   string(defaults.Kind),
+		},
+		&cli.IntFlag{
+			Name:        "module-dots",
+			Usage:       "barcode module width in printer dots; 0 chooses a safe default",
+			Value:       defaults.ModuleDots,
+			DefaultText: "auto",
+		},
+	)
 }
 
 func textRenderingFlags() []cli.Flag {
@@ -781,6 +834,21 @@ func parsePrintOptions(c *cli.Context) (render.Options, printer.PrintOptions, er
 		}
 	}
 	return opts, popts, nil
+}
+
+func parseBarcodeOptions(c *cli.Context) (render.BarcodeOptions, error) {
+	kind, err := render.ParseBarcodeKind(c.String("type"))
+	if err != nil {
+		return render.BarcodeOptions{}, err
+	}
+	moduleDots := c.Int("module-dots")
+	if err := render.ValidateBarcodeModuleDots(moduleDots); err != nil {
+		return render.BarcodeOptions{}, err
+	}
+	return render.BarcodeOptions{
+		Kind:       kind,
+		ModuleDots: moduleDots,
+	}, nil
 }
 
 func applyTextRenderOptions(c *cli.Context, opts *render.Options) error {

@@ -166,6 +166,55 @@ func TestTextArgumentRejectsMultipleValues(t *testing.T) {
 	}
 }
 
+func TestBarcodeArgumentReadsSinglePositionalValue(t *testing.T) {
+	got, err := barcodeArgument(printContextForArgs(t, "ASSET-42"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "ASSET-42" {
+		t.Fatalf("got %q, want barcode data value", got)
+	}
+}
+
+func TestParseBarcodeOptionsAcceptsAliases(t *testing.T) {
+	ctx := barcodePrintContextForArgs(t, "--type", "qr-code", "--module-dots", "4")
+
+	opts, err := parseBarcodeOptions(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.Kind != render.BarcodeQR {
+		t.Fatalf("got kind %q, want qr", opts.Kind)
+	}
+	if opts.ModuleDots != 4 {
+		t.Fatalf("got module dots %d, want 4", opts.ModuleDots)
+	}
+}
+
+func TestParseBarcodeOptionsRejectsUnsupportedType(t *testing.T) {
+	ctx := barcodePrintContextForArgs(t, "--type", "upc")
+
+	_, err := parseBarcodeOptions(ctx)
+	if err == nil {
+		t.Fatal("expected unsupported barcode type error")
+	}
+	if !strings.Contains(err.Error(), "unsupported barcode type") {
+		t.Fatalf("got %q, want unsupported barcode type error", err)
+	}
+}
+
+func TestParseBarcodeOptionsRejectsHugeModuleDots(t *testing.T) {
+	ctx := barcodePrintContextForArgs(t, "--module-dots", "65")
+
+	_, err := parseBarcodeOptions(ctx)
+	if err == nil {
+		t.Fatal("expected module-dots range error")
+	}
+	if !strings.Contains(err.Error(), "module-dots") {
+		t.Fatalf("got %q, want module-dots error", err)
+	}
+}
+
 func TestApplyTextRenderOptionsRequiresDownloadedFont(t *testing.T) {
 	oldCache := defaultFontCache
 	t.Cleanup(func() {
@@ -221,6 +270,11 @@ func parsePrintOptionsForArgs(t *testing.T, args ...string) (render.Options, err
 func textPrintContextForArgs(t *testing.T, args ...string) *cli.Context {
 	t.Helper()
 	return contextForFlags(t, textPrintFlags(), args...)
+}
+
+func barcodePrintContextForArgs(t *testing.T, args ...string) *cli.Context {
+	t.Helper()
+	return contextForFlags(t, barcodePrintFlags(), args...)
 }
 
 func printContextForArgs(t *testing.T, args ...string) *cli.Context {

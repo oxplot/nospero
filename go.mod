@@ -3,6 +3,7 @@ module nospero
 go 1.25.0
 
 require (
+	github.com/boombuler/barcode v1.1.0
 	github.com/fatih/color v1.18.0
 	github.com/joho/godotenv v1.5.1
 	github.com/mattn/go-isatty v0.0.20

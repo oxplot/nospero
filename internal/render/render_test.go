@@ -3,6 +3,7 @@ package render
 import (
 	"image"
 	"image/color"
+	"strings"
 	"testing"
 
 	"golang.org/x/image/font/gofont/goregular"
@@ -212,6 +213,154 @@ func TestMixedLayoutsRender(t *testing.T) {
 	}
 }
 
+func TestBarcodeLabelRendersSupportedKinds(t *testing.T) {
+	tests := []struct {
+		kind BarcodeKind
+		data string
+	}{
+		{BarcodeAztec, "Aztec label 42"},
+		{BarcodeCodabar, "A12345B"},
+		{BarcodeCode128, "ASSET-42"},
+		{BarcodeCode39, "Asset 42"},
+		{BarcodeCode93, "Asset 42"},
+		{BarcodeDataMatrix, "DM-42"},
+		{BarcodeEAN8, "1234567"},
+		{BarcodeEAN13, "590123412345"},
+		{BarcodePDF417, "PDF417 label 42"},
+		{BarcodeQR, "https://example.com/asset/42"},
+		{Barcode2of5, "12345"},
+		{Barcode2of5Interleaved, "123456"},
+	}
+
+	opts := DefaultOptions()
+	opts.TapeWidthMM = 24
+	wantTapeWidth, _ := protocol.PrintableDotsForTapeWidthMM(opts.TapeWidthMM)
+	for _, tt := range tests {
+		t.Run(string(tt.kind), func(t *testing.T) {
+			img, err := BarcodeLabel(tt.data, BarcodeOptions{Kind: tt.kind}, opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if img.Bounds().Dy() != wantTapeWidth {
+				t.Fatalf("got %v, want %d-dot tape width", img.Bounds(), wantTapeWidth)
+			}
+			if !hasBlackPixel(img) {
+				t.Fatal("rendered barcode label has no black pixels")
+			}
+		})
+	}
+}
+
+func TestBarcodeLabelHonorsExplicitModuleDots(t *testing.T) {
+	opts := DefaultOptions()
+	opts.TapeWidthMM = 24
+	opts.HorizontalPaddingMM = 0
+	opts.VerticalPaddingMM = 0
+
+	code, err := encodeBarcode("https://example.com/asset/42", BarcodeQR)
+	if err != nil {
+		t.Fatal(err)
+	}
+	moduleDots := 2
+	img, err := BarcodeLabel("https://example.com/asset/42", BarcodeOptions{
+		Kind:       BarcodeQR,
+		ModuleDots: moduleDots,
+	}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantWidth := (code.Bounds().Dx() + qrQuietZoneModules*2) * moduleDots
+	if img.Bounds().Dx() != wantWidth {
+		t.Fatalf("got label width %d, want %d", img.Bounds().Dx(), wantWidth)
+	}
+	assertQuietZone(t, img, qrQuietZoneModules*moduleDots)
+}
+
+func TestBarcodeLabelAdds2DQuietZoneWithDefaultScaling(t *testing.T) {
+	tests := []struct {
+		name             string
+		kind             BarcodeKind
+		data             string
+		quietZoneModules int
+	}{
+		{
+			name:             "aztec",
+			kind:             BarcodeAztec,
+			data:             "Aztec label 42",
+			quietZoneModules: aztecQuietZoneModules,
+		},
+		{
+			name:             "qr",
+			kind:             BarcodeQR,
+			data:             "https://example.com/asset/42",
+			quietZoneModules: qrQuietZoneModules,
+		},
+		{
+			name:             "datamatrix",
+			kind:             BarcodeDataMatrix,
+			data:             "DM-42",
+			quietZoneModules: dataMatrixQuietZoneModules,
+		},
+		{
+			name:             "pdf417",
+			kind:             BarcodePDF417,
+			data:             "PDF417 label 42",
+			quietZoneModules: pdf417QuietZoneModules,
+		},
+	}
+
+	opts := DefaultOptions()
+	opts.TapeWidthMM = 24
+	opts.HorizontalPaddingMM = 0
+	opts.VerticalPaddingMM = 0
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			code, err := encodeBarcode(tt.data, tt.kind)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tapeWidth, ok := protocol.PrintableDotsForTapeWidthMM(opts.TapeWidthMM)
+			if !ok {
+				t.Fatalf("unsupported test tape width %g", opts.TapeWidthMM)
+			}
+			quietDots := tt.quietZoneModules * (tapeWidth / (code.Bounds().Dy() + tt.quietZoneModules*2))
+
+			img, err := BarcodeLabel(tt.data, BarcodeOptions{Kind: tt.kind}, opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertQuietZone(t, img, quietDots)
+		})
+	}
+}
+
+func TestBarcodeLabelRejectsEAN13Nondigits(t *testing.T) {
+	opts := DefaultOptions()
+	opts.TapeWidthMM = 24
+
+	_, err := BarcodeLabel("not-digits", BarcodeOptions{Kind: BarcodeEAN13}, opts)
+	if err == nil {
+		t.Fatal("expected ean13 digit validation error")
+	}
+	if !strings.Contains(err.Error(), "digits") {
+		t.Fatalf("got %q, want digit validation error", err)
+	}
+}
+
+func TestValidateBarcodeModuleDots(t *testing.T) {
+	for _, value := range []int{0, 1, 64} {
+		if err := ValidateBarcodeModuleDots(value); err != nil {
+			t.Fatalf("ValidateBarcodeModuleDots(%d): %v", value, err)
+		}
+	}
+	for _, value := range []int{-1, 65} {
+		if err := ValidateBarcodeModuleDots(value); err == nil {
+			t.Fatalf("ValidateBarcodeModuleDots(%d) unexpectedly succeeded", value)
+		}
+	}
+}
+
 func TestSplitHorizontalContentByWidthPreservesLayoutRightWidths(t *testing.T) {
 	content := image.Rect(0, 0, 220, 100)
 
@@ -288,4 +437,19 @@ func blackBounds(img *image.Gray) image.Rectangle {
 		return image.Rectangle{}
 	}
 	return out
+}
+
+func assertQuietZone(t *testing.T, img *image.Gray, quietDots int) {
+	t.Helper()
+	ink := blackBounds(img)
+	if ink.Empty() {
+		t.Fatal("rendered barcode has no black pixels")
+	}
+	b := img.Bounds()
+	if ink.Min.X < quietDots ||
+		ink.Min.Y < quietDots ||
+		b.Max.X-ink.Max.X < quietDots ||
+		b.Max.Y-ink.Max.Y < quietDots {
+		t.Fatalf("got ink bounds %v in image %v, want at least %d-dot quiet zone", ink, b, quietDots)
+	}
 }
